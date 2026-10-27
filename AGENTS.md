@@ -31,7 +31,7 @@ runs nightly regardless of what else is being built.
 | `web/` | Next.js + MapLibre GL front end, reading the generated files |
 | `tests/` | pytest suite, one module per ingest/analysis module |
 | `tools/` | Operational scripts, not part of the pipeline |
-| `docs/` | Architecture decision records (ADR-001 … ADR-003) |
+| `docs/` | Architecture decision records (ADR-001 … ADR-004) |
 | `CLAUDE_PROGRESS.md` | Live status and history. **Read it first on resume**; do not duplicate it here |
 | `Documenting the Journey/` | The delivery ledger and build plan |
 
