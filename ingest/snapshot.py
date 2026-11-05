@@ -17,6 +17,14 @@ unchanged practice costs zero additional bytes. A night's manifest still lists
 every practice, so each capture remains a complete, independently parseable view
 of the estate.
 
+One exception to byte-for-byte storage, recorded in ADR-004: from 8 October 2026
+nhs.uk began embedding a bot-defence ``<script>`` whose path and ``?v=`` GUID are
+regenerated on every response. Hashing raw bytes then matched nothing, and every
+night stored the whole estate again (~43 MB instead of ~1 MB). ``normalise``
+replaces that one tag with a fixed placeholder before hashing and storing; the
+manifest keeps ``raw_sha256`` of the bytes actually fetched and lists the rule in
+``normalised``. Nothing else in a payload is ever rewritten.
+
 The store is append-only by contract. Blobs are immutable once written and a
 completed day is never rewritten — see ``guard_day_not_final``.
 """
@@ -27,6 +35,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import tempfile
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
@@ -35,6 +44,28 @@ from pathlib import Path
 from typing import Self
 
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent / "data" / "snapshots"
+
+
+# A per-response nonce, not content: random path segments and a fresh GUID on
+# every fetch of an otherwise identical page. Kept deliberately narrow — if the
+# tag's shape changes, nothing matches and storage simply falls back to raw.
+_BOT_SCRIPT = re.compile(
+    rb'<script type="text/javascript"\s+src="/[A-Za-z0-9_\-/]+'
+    rb'\?v=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"\s+defer></script>'
+)
+_BOT_SCRIPT_PLACEHOLDER = b'<script type="text/javascript" src="/__nonce__" defer></script>'
+
+
+def normalise(body: bytes, content_type: str = "") -> tuple[bytes, list[str]]:
+    """Strip per-response noise so an unchanged page hashes the same every night.
+
+    Returns the body to store and the names of the rules that changed it (empty
+    when the body is stored exactly as fetched).
+    """
+    if "html" not in content_type.lower():
+        return body, []
+    out, n = _BOT_SCRIPT.subn(_BOT_SCRIPT_PLACEHOLDER, body)
+    return (out, ["bot-script-nonce"]) if n else (body, [])
 
 
 def utc_today() -> str:
@@ -142,8 +173,10 @@ class SnapshotWriter:
             raise RuntimeError("SnapshotWriter used outside its context manager")
 
         digest = ""
+        applied: list[str] = []
         if record.ok:
-            digest, is_new, size = self._put_blob(record.body)
+            stored, applied = normalise(record.body, record.content_type)
+            digest, is_new, size = self._put_blob(stored)
             self.written += 1
             if is_new:
                 self.bytes_new += size
@@ -170,6 +203,9 @@ class SnapshotWriter:
             "sha256": digest,
             "bytes": len(record.body),
         }
+        if applied:
+            entry["raw_sha256"] = hashlib.sha256(record.body).hexdigest()
+            entry["normalised"] = applied
         if record.error:
             entry["error"] = record.error[:300]
         if record.meta:
@@ -269,7 +305,8 @@ def read_manifest(root: Path | str, day: str) -> Iterator[dict]:
 
 
 def read_blob(root: Path | str, digest: str) -> bytes:
-    """Resolve a content hash back to the original raw payload."""
+    """Resolve a content hash back to the stored payload: the raw bytes, except
+    where the manifest entry lists ``normalised`` rules (see ``normalise``)."""
     path = Path(root) / "blobs" / digest[:2] / f"{digest}.gz"
     with gzip.open(path, "rb") as fh:
         return fh.read()

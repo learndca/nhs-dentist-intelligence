@@ -184,3 +184,62 @@ def test_run_metadata_is_valid_json(tmp_path):
     write_day(tmp_path, "2026-07-25", 2)
     text = (tmp_path / "2026-07-25" / "run.json").read_text()
     assert json.loads(text)["route"] == "test"
+
+
+# -- bot-script nonce (ADR-004) ---------------------------------------------
+
+def _page(path: bytes, guid: bytes, text: bytes = b"Taking new patients") -> bytes:
+    return (
+        b"<html><body>" + text + b'<script type="text/javascript"  src="/'
+        + path + b"?v=" + guid + b'" defer></script></body></html>'
+    )
+
+
+NIGHT_A = _page(b"SdiV/YaAS/cLN/zrY/lI0w/rfm7QViup91O", b"0ef659d1-8552-69b1-1cb4-ee51a8ce0212")
+NIGHT_B = _page(b"P_0Lo2xPwfy8/8uQWf1/7RWIAQ/NkYawL7O7Y", b"29785b04-7285-92f2-fcc0-2312a5ff5f64")
+
+
+def test_nonce_only_change_dedups_across_nights(tmp_path):
+    """The 8 October regression: same page, new nonce, must cost no new bytes."""
+    with SnapshotWriter(root=tmp_path, day="2026-10-24", route="html") as w:
+        a = w.add(make_record(1, body=NIGHT_A))
+    with SnapshotWriter(root=tmp_path, day="2026-10-25", route="html") as w:
+        b = w.add(make_record(1, body=NIGHT_B))
+    assert a == b
+    assert w.bytes_new == 0 and w.bytes_deduped > 0
+
+
+def test_real_content_change_is_still_stored(tmp_path):
+    with SnapshotWriter(root=tmp_path, day="2026-10-24", route="html") as w:
+        a = w.add(make_record(1, body=NIGHT_A))
+        b = w.add(make_record(2, body=_page(b"x/y", b"29785b04-7285-92f2-fcc0-2312a5ff5f64", b"Not taking")))
+    assert a != b
+
+
+def test_manifest_attests_raw_bytes_when_normalised(tmp_path):
+    import hashlib
+
+    with SnapshotWriter(root=tmp_path, day="2026-10-25", route="html") as w:
+        digest = w.add(make_record(1, body=NIGHT_B))
+    entry = next(read_manifest(tmp_path, "2026-10-25"))
+    assert entry["normalised"] == ["bot-script-nonce"]
+    assert entry["raw_sha256"] == hashlib.sha256(NIGHT_B).hexdigest()
+    assert entry["bytes"] == len(NIGHT_B)
+    stored = read_blob(tmp_path, digest)
+    assert b"__nonce__" in stored and b"Taking new patients" in stored
+
+
+def test_untouched_bodies_carry_no_normalisation_fields(tmp_path):
+    with SnapshotWriter(root=tmp_path, day="2026-10-25", route="html") as w:
+        digest = w.add(make_record(1, body=b"<html>plain</html>"))
+    entry = next(read_manifest(tmp_path, "2026-10-25"))
+    assert "raw_sha256" not in entry and "normalised" not in entry
+    assert read_blob(tmp_path, digest) == b"<html>plain</html>"
+
+
+def test_non_html_is_never_normalised(tmp_path):
+    rec = make_record(1, body=NIGHT_B)
+    rec.content_type = "application/xml"
+    with SnapshotWriter(root=tmp_path, day="2026-10-25", route="html") as w:
+        digest = w.add(rec)
+    assert read_blob(tmp_path, digest) == NIGHT_B
