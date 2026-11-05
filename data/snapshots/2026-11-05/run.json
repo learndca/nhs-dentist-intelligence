@@ -1,0 +1,21 @@
+{
+  "aborted": false,
+  "bytes_deduped": 35113650,
+  "bytes_new": 7183671,
+  "complete": true,
+  "day": "2026-11-05",
+  "duration_seconds": 6988.5,
+  "error_sample": [
+    {
+      "error": "HTTP 404",
+      "practice_id": "V008651",
+      "status": 404,
+      "url": "https://www.nhs.uk/services/dentist/bitterne-health-centre/V008651"
+    }
+  ],
+  "finished_at": "2026-11-05T12:15:27.156060+00:00",
+  "records_failed": 1,
+  "records_ok": 6402,
+  "route": "nhsuk-html",
+  "started_at": "2026-11-05T10:18:58.676040+00:00"
+}
